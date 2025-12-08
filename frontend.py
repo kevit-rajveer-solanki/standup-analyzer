@@ -5,7 +5,6 @@ import pandas as pd
 st.set_page_config(layout="wide", page_title="Standup Performance")
 st.title("Standup Performance Analytics")
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.header("Settings")
     token = st.text_input("Application Token", type="password")
@@ -34,7 +33,6 @@ if btn and token and organizer and link:
                 if not data:
                     st.warning("No meetings found in this period.")
                 else:
-                    # --- DATA PROCESSING ---
                     flat_data = []
                     total_meetings = len(data)
                     
@@ -44,7 +42,7 @@ if btn and token and organizer and link:
                                 "Name": att['name'],
                                 "Team": att['team'],
                                 "Date": m['date'],
-                                "OnTime": att['is_on_time'] # <--- NEW
+                                "OnTime": att['is_on_time'] 
                             })
                     
                     if not flat_data:

@@ -29,7 +29,6 @@ def get_user_details(email, headers):
     return info
 
 def get_meeting_id_from_link(user_id, join_url, headers):
-    # 1. Exact Match
     url = f"{GRAPH_ENDPOINT}/users/{user_id}/onlineMeetings"
     params = {"$filter": f"JoinWebUrl eq '{join_url}'"}
     resp = requests.get(url, headers=headers, params=params)
