@@ -52,8 +52,7 @@ if btn and token and organizer and link:
                     else:
                         df = pd.DataFrame(flat_data)
                         
-                        # Aggregation
-                        # Count Unique Dates (Attendance) and Sum OnTime (True=1, False=0)
+                        
                         stats = df.groupby(['Team', 'Name']).agg({
                             'Date': 'nunique',
                             'OnTime': 'sum' 
@@ -61,31 +60,24 @@ if btn and token and organizer and link:
                         
                         stats.rename(columns={'Date': 'Days Attended', 'OnTime': 'Days On Time'}, inplace=True)
                         
-                        # Metrics Calculation
                         stats['Attendance %'] = (stats['Days Attended'] / total_meetings * 100).round(1)
-                        # Punctuality: % of their ATTENDED meetings where they were on time
                         stats['Punctuality %'] = (stats['Days On Time'] / stats['Days Attended'] * 100).fillna(0).round(1)
                         
-                        # Sorting for Analytics
                         sorted_df = stats.sort_values(by='Attendance %', ascending=False)
                         top_5 = sorted_df.head(5)
                         bottom_5 = sorted_df.tail(5)
 
-                        # --- DASHBOARD LAYOUT ---
                         
-                        # 1. KPI Cards
                         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
                         kpi1.metric("Total Meetings", total_meetings)
                         kpi2.metric("Total People", df['Name'].nunique())
                         avg_dur = sum(m['duration'] for m in data) / total_meetings
                         kpi3.metric("Avg Duration", f"{avg_dur:.1f} min")
-                        # Avg Punctuality of the whole group
                         avg_punc = stats['Punctuality %'].mean()
                         kpi4.metric("Team Punctuality", f"{avg_punc:.1f}%")
 
                         st.divider()
 
-                        # 2. TABS
                         tab1, tab2 = st.tabs(["Performance Analytics", "Team Report"])
                         
                         with tab1:
@@ -107,7 +99,6 @@ if btn and token and organizer and link:
 
                         with tab2:
                             st.subheader("Full Team Breakdown")
-                            # Group by Team
                             unique_teams = stats['Team'].unique()
                             for team in unique_teams:
                                 with st.expander(f"Team: {team}", expanded=False):

@@ -10,7 +10,6 @@ app = FastAPI()
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 user_cache = {}
 
-# --- HELPERS ---
 def get_user_details(email, headers):
     if not email: return {"name": "Unknown", "team": "Unknown"}
     if email in user_cache: return user_cache[email]
@@ -37,7 +36,6 @@ def get_meeting_id_from_link(user_id, join_url, headers):
     if resp.status_code == 200 and resp.json().get('value'):
         return resp.json()['value'][0]['id']
     
-    # 2. Fallback
     print("DEBUG: Exact match failed, trying fallback...")
     try:
         decoded = urllib.parse.unquote(join_url)
@@ -56,7 +54,6 @@ def get_user_id(email, headers):
     resp = requests.get(f"{GRAPH_ENDPOINT}/users/{email}", headers=headers)
     return resp.json().get('id') if resp.status_code == 200 else None
 
-# --- REQUEST MODEL ---
 class AnalysisRequest(BaseModel):
     token: str
     start_date: str
@@ -64,19 +61,16 @@ class AnalysisRequest(BaseModel):
     organizer_email: str
     meeting_link: str
 
-# --- MAIN ENDPOINT ---
 @app.post("/analyze")
 def analyze_standup(req: AnalysisRequest):
     headers = {'Authorization': f'Bearer {req.token}', 'Content-Type': 'application/json'}
     
-    # 1. Setup
     organizer_id = get_user_id(req.organizer_email, headers)
     if not organizer_id: raise HTTPException(404, "Organizer not found")
 
     meeting_id = get_meeting_id_from_link(organizer_id, req.meeting_link, headers)
     if not meeting_id: raise HTTPException(404, "Meeting ID not found")
 
-    # 2. Fetch Reports
     reports_url = f"{GRAPH_ENDPOINT}/users/{organizer_id}/onlineMeetings/{meeting_id}/attendanceReports"
     reports_resp = requests.get(reports_url, headers=headers)
     if reports_resp.status_code != 200: return []
@@ -95,11 +89,9 @@ def analyze_standup(req: AnalysisRequest):
         meeting_dt = parser.parse(report.get('meetingStartDateTime'))
         meeting_date = meeting_dt.date()
 
-        # Filter Range & Weekend
         if not (start_range <= meeting_date <= end_range): continue
         if meeting_dt.weekday() > 4: continue
 
-        # 3. Get Attendees & Intervals
         rec_url = f"{reports_url}/{report['id']}/attendanceRecords"
         rec_resp = requests.get(rec_url, headers=headers)
         
@@ -110,7 +102,6 @@ def analyze_standup(req: AnalysisRequest):
             for rec in records:
                 if not isinstance(rec, dict): continue
                 
-                # A. Extract Email/Name
                 name = "Unknown"
                 email = None
                 
@@ -125,23 +116,18 @@ def analyze_standup(req: AnalysisRequest):
                     details = get_user_details(email, headers)
                     name = details['name']
 
-                # B. Calculate "On Time"
-                # We check the first time they joined the call
                 is_on_time = False
                 intervals = rec.get('attendanceIntervals', [])
                 if isinstance(intervals, list) and len(intervals) > 0:
                     try:
-                        # Find earliest join time
                         join_times = [parser.parse(i['joinDateTime']) for i in intervals if isinstance(i, dict) and 'joinDateTime' in i]
                         if join_times:
                             first_join = min(join_times)
-                            # Diff in minutes: (User Join - Meeting Start)
                             diff_min = (first_join - meeting_dt).total_seconds() / 60
-                            # If they joined within 5 minutes of start, mark on time
                             if diff_min <= 5:
                                 is_on_time = True
                     except:
-                        pass # Keep false if parse error
+                        pass 
 
                 if email or name != "Unknown":
                     team = details['team'] if email else "Guest"
@@ -149,10 +135,9 @@ def analyze_standup(req: AnalysisRequest):
                         "name": name,
                         "email": email,
                         "team": team,
-                        "is_on_time": is_on_time  # <--- NEW FIELD
+                        "is_on_time": is_on_time 
                     })
 
-        # Duration
         m_end = parser.parse(report.get('meetingEndDateTime'))
         duration = (m_end - meeting_dt).seconds / 60
 
