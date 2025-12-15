@@ -29,28 +29,42 @@ def get_user_details(email, headers):
     return info
 
 def get_meeting_id_from_link(user_id, join_url, headers):
+    # 1. Exact Match (Fastest)
     url = f"{GRAPH_ENDPOINT}/users/{user_id}/onlineMeetings"
     params = {"$filter": f"JoinWebUrl eq '{join_url}'"}
     resp = requests.get(url, headers=headers, params=params)
     if resp.status_code == 200 and resp.json().get('value'):
         return resp.json()['value'][0]['id']
     
-    print("DEBUG: Exact match failed, trying fallback...")
+    # 2. Fallback (Deep Search)
+    print("DEBUG: Exact link match failed. Searching deeper history...")
     try:
         decoded = urllib.parse.unquote(join_url)
         if 'meetup-join/' in decoded:
+            # Extract the unique Thread ID from the link
             thread_id = decoded.split('meetup-join/')[1].split('/0?')[0]
-            r2 = requests.get(url, headers=headers, params={"$top": 20})
+            
+            # --- CHANGE IS HERE: INCREASED LIMIT FROM 20 TO 999 ---
+            p2 = {"$top": 999} 
+            
+            r2 = requests.get(url, headers=headers, params=p2)
             if r2.status_code == 200:
+                total_scanned = len(r2.json().get('value', []))
+                print(f"DEBUG: Scanning {total_scanned} meetings for thread ID match...")
+                
                 for m in r2.json().get('value', []):
+                    # Check if the thread ID exists inside this meeting's JoinWebUrl
+                    # We unquote both to ensure fair comparison
                     if thread_id in urllib.parse.unquote(m.get('JoinWebUrl', '')):
+                        print(f"DEBUG: Match found! Meeting ID: {m['id']}")
                         return m['id']
-    except:
-        pass
-    return None
+    except Exception as e:
+        print(f"DEBUG: Fallback failed: {e}")
 
+    return None
 def get_user_id(email, headers):
     resp = requests.get(f"{GRAPH_ENDPOINT}/users/{email}", headers=headers)
+    breakpoint()
     return resp.json().get('id') if resp.status_code == 200 else None
 
 class AnalysisRequest(BaseModel):
@@ -63,13 +77,14 @@ class AnalysisRequest(BaseModel):
 @app.post("/analyze")
 def analyze_standup(req: AnalysisRequest):
     headers = {'Authorization': f'Bearer {req.token}', 'Content-Type': 'application/json'}
-    
+    breakpoint()
     organizer_id = get_user_id(req.organizer_email, headers)
+    breakpoint()
     if not organizer_id: raise HTTPException(404, "Organizer not found")
-
     meeting_id = get_meeting_id_from_link(organizer_id, req.meeting_link, headers)
+    breakpoint()
     if not meeting_id: raise HTTPException(404, "Meeting ID not found")
-
+    
     reports_url = f"{GRAPH_ENDPOINT}/users/{organizer_id}/onlineMeetings/{meeting_id}/attendanceReports"
     reports_resp = requests.get(reports_url, headers=headers)
     if reports_resp.status_code != 200: return []
@@ -79,8 +94,6 @@ def analyze_standup(req: AnalysisRequest):
     
     start_range = parser.parse(req.start_date).date()
     end_range = parser.parse(req.end_date).date()
-
-    print(f"DEBUG: Processing {len(all_reports)} reports...")
 
     for report in all_reports:
         if not report.get('meetingStartDateTime'): continue
@@ -115,16 +128,28 @@ def analyze_standup(req: AnalysisRequest):
                     details = get_user_details(email, headers)
                     name = details['name']
 
+                join_time_str = "-"
+                leave_time_str = "-"
                 is_on_time = False
+
                 intervals = rec.get('attendanceIntervals', [])
                 if isinstance(intervals, list) and len(intervals) > 0:
                     try:
-                        join_times = [parser.parse(i['joinDateTime']) for i in intervals if isinstance(i, dict) and 'joinDateTime' in i]
-                        if join_times:
-                            first_join = min(join_times)
+                        joins = [parser.parse(i['joinDateTime']) for i in intervals if 'joinDateTime' in i]
+                        leaves = [parser.parse(i['leaveDateTime']) for i in intervals if 'leaveDateTime' in i]
+                        
+                        if joins:
+                            first_join = min(joins)
+                            join_time_str = first_join.strftime("%H:%M:%S")
+                            
                             diff_min = (first_join - meeting_dt).total_seconds() / 60
                             if diff_min <= 5:
                                 is_on_time = True
+                        
+                        if leaves:
+                            last_leave = max(leaves)
+                            leave_time_str = last_leave.strftime("%H:%M:%S")
+                            
                     except:
                         pass 
 
@@ -134,7 +159,9 @@ def analyze_standup(req: AnalysisRequest):
                         "name": name,
                         "email": email,
                         "team": team,
-                        "is_on_time": is_on_time 
+                        "join_time": join_time_str,  
+                        "leave_time": leave_time_str, 
+                        "is_on_time": is_on_time
                     })
 
         m_end = parser.parse(report.get('meetingEndDateTime'))
