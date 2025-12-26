@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 
 st.set_page_config(layout="wide", page_title="Standup Performance")
-st.title("Standup Analytics")
+st.title("Standup Performance Analytics")
 
 with st.sidebar:
     st.header("Settings")
@@ -15,7 +15,7 @@ with st.sidebar:
     btn = st.button("Generate Report", type="primary")
 
 if btn and token and organizer and link:
-    with st.spinner("Fetching timestamps..."):
+    with st.spinner("Analyzing..."):
         try:
             payload = {
                 "token": token,
@@ -25,88 +25,86 @@ if btn and token and organizer and link:
                 "meeting_link": link
             }
             res = requests.post("http://localhost:8000/analyze", json=payload)
-            
+
             if res.status_code != 200:
                 st.error(f"Error: {res.text}")
             else:
                 data = res.json()
                 if not data:
-                    st.warning("No data found.")
+                    st.warning("No meetings found in this period.")
                 else:
                     flat_data = []
                     total_meetings = len(data)
-                    
+
                     for m in data:
                         for att in m['attendees']:
                             flat_data.append({
                                 "Name": att['name'],
                                 "Team": att['team'],
                                 "Date": m['date'],
-                                "Join Time": att['join_time'],
-                                "Leave Time": att['leave_time'],
                                 "OnTime": att['is_on_time']
                             })
-                    
-                    df = pd.DataFrame(flat_data)
-                    
-                    if df.empty:
-                        st.warning("No attendees found.")
+
+                    if not flat_data:
+                        st.warning("Meetings found, but no attendees.")
                     else:
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Total Meetings", total_meetings)
-                        c2.metric("Total Unique People", df['Name'].nunique())
-                        
-                        
-                        avg_punc = (df['OnTime'].sum() / len(df) * 100)
-                        c3.metric("Overall Punctuality", f"{avg_punc:.1f}%")
+                        df = pd.DataFrame(flat_data)
+
+                        stats = df.groupby(['Team', 'Name']).agg({
+                            'Date': 'nunique',
+                            'OnTime': 'sum'
+                        }).reset_index()
+
+                        stats.rename(columns={'Date': 'Days Attended', 'OnTime': 'Days On Time'}, inplace=True)
+
+                        stats['Attendance %'] = (stats['Days Attended'] / total_meetings * 100).round(1)
+                        stats['Punctuality %'] = (stats['Days On Time'] / stats['Days Attended'] * 100).fillna(0).round(
+                            1)
+
+                        sorted_df = stats.sort_values(by='Attendance %', ascending=False)
+                        top_5 = sorted_df.head(5)
+                        bottom_5 = sorted_df.tail(5)
+
+                        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+                        kpi1.metric("Total Meetings", total_meetings)
+                        kpi2.metric("Total People", df['Name'].nunique())
+                        avg_dur = sum(m['duration'] for m in data) / total_meetings
+                        kpi3.metric("Avg Duration", f"{avg_dur:.1f} min")
+                        avg_punc = stats['Punctuality %'].mean()
+                        kpi4.metric("Team Punctuality", f"{avg_punc:.1f}%")
 
                         st.divider()
 
-                        # 2. Tabs
-                        tab1, tab2, tab3 = st.tabs(["Performance Leaderboard", "Daily Timestamps", "Detailed List"])
+                        tab1, tab2 = st.tabs(["Performance Analytics", "Team Report"])
 
                         with tab1:
-                            stats = df.groupby(['Team', 'Name']).agg({
-                                'Date': 'nunique',       
-                                'OnTime': 'sum'          
-                            }).reset_index()
-                            
-                            stats.rename(columns={'Date': 'Days Attended', 'OnTime': 'Days On Time'}, inplace=True)
-                            
-                            stats['Attendance %'] = (stats['Days Attended'] / total_meetings * 100).round(1)
-                            stats['Punctuality %'] = (stats['Days On Time'] / stats['Days Attended'] * 100).fillna(0).round(1)
-                            
-                            st.subheader("Top 5 Consistent Members")
-                            top_5 = stats.sort_values(by=['Attendance %', 'Punctuality %'], ascending=False).head(5)
-                            st.dataframe(top_5.style.background_gradient(subset=['Attendance %'], cmap="Greens").format({'Attendance %': '{:.1f}%', 'Punctuality %': '{:.1f}%'}))
+                            st.subheader("Top 5")
+                            st.dataframe(
+                                top_5[['Name', 'Team', 'Attendance %', 'Punctuality %']]
+                                .style.background_gradient(subset=['Attendance %'], cmap="Greens")
+                                .format({'Attendance %': '{:.1f}%', 'Punctuality %': '{:.1f}%'})
+                            )
 
-                            st.subheader("Bottom 5 Members")
-                            bot_5 = stats.sort_values(by=['Attendance %', 'Punctuality %'], ascending=True).head(5)
-                            st.dataframe(bot_5.style.background_gradient(subset=['Attendance %'], cmap="Reds_r").format({'Attendance %': '{:.1f}%', 'Punctuality %': '{:.1f}%'}))
+                            st.divider()
+
+                            st.subheader("Bottom 5")
+                            st.dataframe(
+                                bottom_5[['Name', 'Team', 'Attendance %', 'Punctuality %']]
+                                .style.background_gradient(subset=['Attendance %'], cmap="Reds_r")  # Red for low
+                                .format({'Attendance %': '{:.1f}%', 'Punctuality %': '{:.1f}%'})
+                            )
 
                         with tab2:
-                            st.subheader("Daily Join/Leave Logs")
-                            
-                            teams = sorted(df['Team'].unique())
-                            selected_team = st.selectbox("Select Team:", ["All"] + list(teams))
-                            view_df = df if selected_team == "All" else df[df['Team'] == selected_team]
-
-                            view_df['Time Log'] = view_df['Join Time'] + " - " + view_df['Leave Time']
-                            
-                            try:
-                                pivot_df = view_df.pivot_table(
-                                    index=['Team', 'Name'], 
-                                    columns='Date', 
-                                    values='Time Log', 
-                                    aggfunc='first'
-                                ).fillna("Absent")
-                                st.dataframe(pivot_df)
-                            except:
-                                st.dataframe(view_df[['Team','Name','Date','Join Time','Leave Time']])
-
-                        with tab3:
-                            st.subheader("Full Data Export")
-                            st.dataframe(df)
+                            st.subheader("Full Team Breakdown")
+                            unique_teams = stats['Team'].unique()
+                            for team in unique_teams:
+                                with st.expander(f"Team: {team}", expanded=False):
+                                    team_data = stats[stats['Team'] == team]
+                                    st.dataframe(
+                                        team_data[['Name', 'Days Attended', 'Attendance %', 'Punctuality %']]
+                                        .style.background_gradient(subset=['Attendance %'], cmap="Blues")
+                                        .format({'Attendance %': '{:.1f}%', 'Punctuality %': '{:.1f}%'})
+                                    )
 
         except Exception as e:
             st.error(f"Connection Error: {e}")
